@@ -31,8 +31,9 @@ class ComplaintChatbotApp:
         if not self.initialized:
             try:
                 print("Initializing RAG Pipeline...")
+                project_root = Path(__file__).parent
                 self.rag_pipeline = RAGPipeline(
-                    vector_store_dir=Path('vector_store'),
+                    vector_store_dir=project_root / 'vector_store',
                     embedding_model_name="sentence-transformers/all-MiniLM-L6-v2",
                     top_k=5
                 )
@@ -42,9 +43,9 @@ class ComplaintChatbotApp:
             except FileNotFoundError as e:
                 error_msg = (
                     f"Error loading vector store: {str(e)}\n\n"
-                    "Please ensure:\n"
-                    "1. Pre-built embeddings exist at: data/data/complaint_embeddings-002.parquet\n"
-                    "2. Or vector store files exist in: vector_store/\n\n"
+                    f"Please ensure:\n"
+                    f"1. Pre-built embeddings exist at: {Path(__file__).parent / 'data' / 'data' / 'complaint_embeddings-002.parquet'}\n"
+                    f"2. Or vector store files exist in: {Path(__file__).parent / 'vector_store'}\n\n"
                     "If you haven't created the vector store yet, please run Task 2 first."
                 )
                 return False, error_msg
