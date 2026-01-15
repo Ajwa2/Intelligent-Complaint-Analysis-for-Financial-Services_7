@@ -44,7 +44,9 @@ class RAGPipeline:
         
         # Load vector store
         if vector_store_dir is None:
-            vector_store_dir = Path('../vector_store')
+            # Try relative to project root
+            project_root = Path(__file__).parent.parent
+            vector_store_dir = project_root / 'vector_store'
         else:
             vector_store_dir = Path(vector_store_dir)
         
@@ -60,7 +62,8 @@ class RAGPipeline:
         print(f"Loading vector store from {self.vector_store_dir}...")
         
         # Try to load from pre-built embeddings parquet file first
-        embeddings_file = Path('../data/data/complaint_embeddings-002.parquet')
+        project_root = Path(__file__).parent.parent
+        embeddings_file = project_root / 'data' / 'data' / 'complaint_embeddings-002.parquet'
         if embeddings_file.exists():
             print("Loading from pre-built embeddings parquet file...")
             self._load_from_parquet(embeddings_file)
@@ -86,46 +89,80 @@ class RAGPipeline:
         df_embeddings = pd.read_parquet(embeddings_file)
         
         print(f"Loaded {len(df_embeddings):,} chunks from parquet")
+        print(f"Columns in parquet file: {df_embeddings.columns.tolist()}")
         
-        # Extract embeddings (assuming they're stored as arrays or lists)
-        # The parquet file should have columns: embedding, chunk_text, and metadata columns
-        if 'embedding' in df_embeddings.columns:
-            # If embeddings are stored as arrays
-            embeddings_list = []
-            for emb in df_embeddings['embedding']:
-                if isinstance(emb, (list, np.ndarray)):
-                    embeddings_list.append(np.array(emb, dtype='float32'))
-                else:
-                    # If stored as string or other format, parse it
-                    embeddings_list.append(np.array(json.loads(emb) if isinstance(emb, str) else emb, dtype='float32'))
+        # Extract embeddings - handle different possible formats
+        embeddings_list = []
+        
+        # Try different possible column names for embeddings
+        embedding_cols = [col for col in df_embeddings.columns 
+                         if 'embedding' in col.lower() or 'vector' in col.lower() or 'emb' in col.lower()]
+        
+        if not embedding_cols:
+            # If no embedding column found, check if we need to generate them
+            # or if they're stored in a different format
+            print("Warning: No embedding column found. Checking data structure...")
+            print("First few rows sample:")
+            print(df_embeddings.head())
+            
+            # Try to find any array-like columns
+            for col in df_embeddings.columns:
+                sample_val = df_embeddings[col].iloc[0]
+                if isinstance(sample_val, (list, np.ndarray)) or (hasattr(sample_val, '__len__') and len(sample_val) > 10):
+                    embedding_cols = [col]
+                    print(f"Found potential embedding column: {col}")
+                    break
+        
+        if embedding_cols:
+            col = embedding_cols[0]
+            print(f"Extracting embeddings from column: {col}")
+            
+            for idx, emb in enumerate(df_embeddings[col]):
+                try:
+                    if isinstance(emb, np.ndarray):
+                        embeddings_list.append(emb.astype('float32'))
+                    elif isinstance(emb, list):
+                        embeddings_list.append(np.array(emb, dtype='float32'))
+                    elif isinstance(emb, str):
+                        # Try to parse JSON string
+                        try:
+                            parsed = json.loads(emb)
+                            embeddings_list.append(np.array(parsed, dtype='float32'))
+                        except:
+                            # If it's a space-separated string
+                            embeddings_list.append(np.array(emb.split(), dtype='float32'))
+                    else:
+                        # Try to convert to array
+                        embeddings_list.append(np.array(emb, dtype='float32'))
+                except Exception as e:
+                    print(f"Warning: Could not parse embedding at index {idx}: {e}")
+                    # Use zero vector as fallback
+                    embeddings_list.append(np.zeros(self.embedding_dim, dtype='float32'))
             
             self.embeddings = np.vstack(embeddings_list).astype('float32')
+            print(f"Extracted embeddings shape: {self.embeddings.shape}")
         else:
-            # Try to find embedding columns (might be named differently)
-            embedding_cols = [col for col in df_embeddings.columns if 'embedding' in col.lower() or 'vector' in col.lower()]
-            if embedding_cols:
-                # Assume first embedding column
-                col = embedding_cols[0]
-                embeddings_list = []
-                for emb in df_embeddings[col]:
-                    if isinstance(emb, (list, np.ndarray)):
-                        embeddings_list.append(np.array(emb, dtype='float32'))
-                    else:
-                        embeddings_list.append(np.array(json.loads(emb) if isinstance(emb, str) else emb, dtype='float32'))
-                self.embeddings = np.vstack(embeddings_list).astype('float32')
-            else:
-                raise ValueError("Could not find embedding column in parquet file")
+            raise ValueError(
+                "Could not find embedding column in parquet file. "
+                f"Available columns: {df_embeddings.columns.tolist()}"
+            )
         
         # Extract chunks and metadata
-        if 'chunk_text' in df_embeddings.columns:
-            self.chunks = df_embeddings['chunk_text'].tolist()
-        elif 'text' in df_embeddings.columns:
-            self.chunks = df_embeddings['text'].tolist()
+        chunk_text_cols = [col for col in df_embeddings.columns 
+                          if 'text' in col.lower() or 'chunk' in col.lower() or 'narrative' in col.lower()]
+        
+        if chunk_text_cols:
+            chunk_col = chunk_text_cols[0]
+            self.chunks = df_embeddings[chunk_col].astype(str).tolist()
+            print(f"Extracted chunks from column: {chunk_col}")
         else:
-            # Try to find text column
-            text_cols = [col for col in df_embeddings.columns if 'text' in col.lower() or 'chunk' in col.lower()]
-            if text_cols:
-                self.chunks = df_embeddings[text_cols[0]].tolist()
+            # If no text column, try to construct from metadata
+            print("Warning: No chunk text column found. Attempting to construct from available data...")
+            # Fallback: use first text-like column or create placeholder
+            text_like_cols = [col for col in df_embeddings.columns if df_embeddings[col].dtype == 'object']
+            if text_like_cols:
+                self.chunks = df_embeddings[text_like_cols[0]].astype(str).tolist()
+                print(f"Using column '{text_like_cols[0]}' as chunk text")
             else:
                 raise ValueError("Could not find chunk text column in parquet file")
         
@@ -133,22 +170,37 @@ class RAGPipeline:
         metadata_cols = ['complaint_id', 'product_category', 'product', 'issue', 'sub_issue', 
                         'company', 'state', 'date_received', 'chunk_index', 'total_chunks']
         self.metadata = []
+        
         for idx, row in df_embeddings.iterrows():
             meta = {}
             for col in metadata_cols:
                 if col in df_embeddings.columns:
-                    meta[col] = row[col]
+                    val = row[col]
+                    meta[col] = str(val) if pd.notna(val) else 'Unknown'
                 else:
                     meta[col] = 'Unknown'
-            meta['chunk_text'] = self.chunks[idx]
+            meta['chunk_text'] = self.chunks[idx] if idx < len(self.chunks) else ''
             self.metadata.append(meta)
+        
+        print(f"Extracted metadata for {len(self.metadata):,} chunks")
         
         # Create FAISS index
         print("Creating FAISS index...")
+        # Normalize embeddings for cosine similarity
+        if self.embeddings.shape[1] != self.embedding_dim:
+            print(f"Warning: Embedding dimension mismatch. Expected {self.embedding_dim}, got {self.embeddings.shape[1]}")
+            # Try to adjust
+            if self.embeddings.shape[1] > self.embedding_dim:
+                self.embeddings = self.embeddings[:, :self.embedding_dim]
+            else:
+                # Pad with zeros
+                padding = np.zeros((self.embeddings.shape[0], self.embedding_dim - self.embeddings.shape[1]), dtype='float32')
+                self.embeddings = np.hstack([self.embeddings, padding])
+        
         faiss.normalize_L2(self.embeddings)  # Normalize for cosine similarity
         self.index = faiss.IndexFlatIP(self.embedding_dim)
         self.index.add(self.embeddings)
-        print(f"FAISS index created with {self.index.ntotal:,} vectors")
+        print(f"✓ FAISS index created with {self.index.ntotal:,} vectors")
     
     def _load_from_files(self, faiss_index_path: Path, metadata_path: Path, chunks_path: Path):
         """Load vector store from saved files."""
