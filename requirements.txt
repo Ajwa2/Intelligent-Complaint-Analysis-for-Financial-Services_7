@@ -1,0 +1,39 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Text processing and chunking
+langchain>=0.1.0
+langchain-community>=0.0.20
+
+# Embeddings
+sentence-transformers>=2.2.0
+torch>=2.0.0
+
+# Vector stores
+faiss-cpu>=1.7.4
+# Alternative: chromadb>=0.4.0
+
+# Jupyter notebook support
+jupyter>=1.0.0
+ipykernel>=6.25.0
+notebook>=6.5.0
+
+# Utilities
+tqdm>=4.65.0
+pathlib2>=2.3.7; python_version < '3.4'
+
+# RAG and LLM
+transformers>=4.30.0
+accelerate>=0.20.0
+safetensors>=0.3.0
+
+# Interface
+gradio>=4.0.0
+streamlit>=1.28.0  # Alternative to Gradio
+
+# Data formats
+pyarrow>=12.0.0  # For parquet file support
+fastparquet>=2023.4.0  # Alternative parquet reader
